@@ -88,5 +88,5 @@ function readRawBody(req: VercelRequest): Promise<string> {
 }
 
 function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>): evt is VercelDeploymentSucceededEvent {
-    return evt.type === "deployment.succeeded" || evt.type === "deployment.ready";
+    return evt.type === "deployment.succeeded";
 }

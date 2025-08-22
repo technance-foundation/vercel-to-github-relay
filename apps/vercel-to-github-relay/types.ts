@@ -123,5 +123,5 @@ export interface VercelDeploymentPayload {
  * Specialized webhook event type for succeeded/ready deployments.
  */
 export type VercelDeploymentSucceededEvent = VercelWebhook<VercelDeploymentPayload> & {
-    type: "deployment.succeeded" | "deployment.ready";
+    type: "deployment.succeeded";
 };

@@ -1,0 +1,16 @@
+{
+    "version": 2,
+    "builds": [
+        {
+            "src": "api/vercel-to-github-success-deployment.ts",
+            "use": "@vercel/node"
+        }
+    ],
+    "routes": [
+        {
+            "src": "/api/vercel-to-github-success-deployment",
+            "dest": "api/vercel-to-github-success-deployment.ts",
+            "methods": ["POST"]
+        }
+    ]
+}

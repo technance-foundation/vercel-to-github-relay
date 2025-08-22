@@ -1,29 +1,31 @@
-import crypto from "crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
-export default async function handler(req: Request): Promise<Response> {
+export default async function handler(req: any, res: any) {
     if (req.method !== "POST") {
-        return new Response("Method Not Allowed", { status: 405 });
+        res.status(405).send("Method Not Allowed");
+        return;
     }
 
-    const text = await req.text();
-
     const secret = process.env.VERCEL_WEBHOOK_SECRET || "";
-    const sig = req.headers.get("x-vercel-signature");
-    if (!secret || !verifyVercelSig(text, sig, secret)) {
-        return new Response("Invalid signature", { status: 401 });
+    const sig = req.headers["x-vercel-signature"] as string | undefined;
+
+    const text = await readRawBody(req);
+
+    if (!secret || !verifyVercelSig(text, sig ?? null, secret)) {
+        res.status(401).send("Invalid signature");
+        return;
     }
 
     const payload = JSON.parse(text);
     const type: string = payload.type || payload.event || payload.action || "";
-
     const deployment = payload.deployment || payload.payload?.deployment || payload;
-
     const state: string | undefined = deployment.state || deployment.status;
 
     const isReadyEvent = type === "deployment.succeeded" || type === "deployment.ready" || state === "READY" || state === "ready";
 
     if (!isReadyEvent) {
-        return new Response("Ignored", { status: 202 });
+        res.status(202).send("Ignored");
+        return;
     }
 
     const rawUrl: string =
@@ -36,7 +38,8 @@ export default async function handler(req: Request): Promise<Response> {
         "";
 
     if (!rawUrl) {
-        return new Response("No preview URL", { status: 400 });
+        res.status(400).send("No preview URL");
+        return;
     }
 
     const project: string = deployment.project?.name || deployment.name || payload.project?.name || "";
@@ -45,7 +48,8 @@ export default async function handler(req: Request): Promise<Response> {
     const ghRepo = process.env.GH_REPO;
     const ghToken = process.env.GH_TOKEN_RELAY;
     if (!ghOwner || !ghRepo || !ghToken) {
-        return new Response("Missing GitHub config", { status: 500 });
+        res.status(500).send("Missing GitHub config");
+        return;
     }
 
     const body = {
@@ -69,19 +73,30 @@ export default async function handler(req: Request): Promise<Response> {
 
     if (!ghResp.ok) {
         const err = await ghResp.text();
-        return new Response(`GitHub dispatch failed: ${ghResp.status} ${err}`, { status: 502 });
+        res.status(502).send(`GitHub dispatch failed: ${ghResp.status} ${err}`);
+        return;
     }
 
-    return new Response("OK", { status: 200 });
+    res.status(200).send("OK");
+}
+
+async function readRawBody(req: any): Promise<string> {
+    return await new Promise<string>((resolve, reject) => {
+        let data = "";
+        req.setEncoding("utf8");
+        req.on("data", (chunk: string) => (data += chunk));
+        req.on("end", () => resolve(data));
+        req.on("error", reject);
+    });
 }
 
 function verifyVercelSig(body: string, signature: string | null, secret: string) {
     if (!signature) return false;
-    const hmac = crypto.createHmac("sha1", secret);
+    const hmac = createHmac("sha1", secret);
     const digest = Buffer.from("sha1=" + hmac.update(body).digest("hex"), "utf8");
     const check = Buffer.from(signature, "utf8");
     try {
-        return crypto.timingSafeEqual(digest, check);
+        return timingSafeEqual(digest, check);
     } catch {
         return false;
     }

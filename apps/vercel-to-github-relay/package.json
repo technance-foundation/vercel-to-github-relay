@@ -1,0 +1,14 @@
+{
+    "name": "@technance/vercel-to-github-relay",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "scripts": {
+        "dev": "vercel dev",
+        "start": "vercel dev"
+    },
+    "dependencies": {},
+    "engines": {
+        "node": ">=20"
+    }
+}

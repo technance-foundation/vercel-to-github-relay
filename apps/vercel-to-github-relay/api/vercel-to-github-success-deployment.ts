@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { VercelWebhook, VercelDeploymentPayload, VercelDeploymentSucceededEvent } from "../types";
 
-const GH_WORKFLOW_FILE = "e2e-on-vercel-webhook.yaml";
+const GH_WORKFLOW_FILE = "e2e.yaml";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== "POST") {

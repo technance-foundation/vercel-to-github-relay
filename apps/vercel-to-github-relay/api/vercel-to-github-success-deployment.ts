@@ -8,7 +8,6 @@ export default async function handler(req: any, res: any) {
 
     const secret = process.env.VERCEL_WEBHOOK_SECRET || "";
     const sig = req.headers["x-vercel-signature"] as string | undefined;
-
     const text = await readRawBody(req);
 
     if (!secret || !verifyVercelSig(text, sig ?? null, secret)) {
@@ -42,38 +41,53 @@ export default async function handler(req: any, res: any) {
         return;
     }
 
+    const meta = deployment.meta || payload.meta || payload.payload?.meta || {};
+    // Common places Vercel provides the source branch
+    const ref: string = meta.githubCommitRef || meta.gitlabCommitRef || meta.branch || deployment.ref || payload.ref || "";
+
+    if (!ref) {
+        res.status(400).send("No branch ref in payload (meta.githubCommitRef/branch missing)");
+        return;
+    }
+
     const project: string = deployment.project?.name || deployment.name || payload.project?.name || "";
 
     const ghOwner = process.env.GH_OWNER;
     const ghRepo = process.env.GH_REPO;
     const ghToken = process.env.GH_TOKEN_RELAY;
+
     if (!ghOwner || !ghRepo || !ghToken) {
-        res.status(500).send("Missing GitHub config");
+        res.status(500).send("Missing GitHub config (GH_OWNER/GH_REPO/GH_TOKEN_RELAY)");
         return;
     }
 
-    const body = {
-        event_type: "vercel_deployment_ready",
-        client_payload: {
+    const dispatchBody = {
+        ref, // PR branch
+        inputs: {
             url: rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`,
             project,
         },
     };
 
-    const ghResp = await fetch(`https://api.github.com/repos/${ghOwner}/${ghRepo}/dispatches`, {
-        method: "POST",
-        headers: {
-            Authorization: `Bearer ${ghToken}`,
-            "Content-Type": "application/json",
-            "User-Agent": "vercel-to-github-relay",
-            Accept: "application/vnd.github+json",
+    const ghWorkflowFile = "dispatch-test.yaml";
+
+    const ghResp = await fetch(
+        `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/${encodeURIComponent(ghWorkflowFile)}/dispatches`,
+        {
+            method: "POST",
+            headers: {
+                Authorization: `Bearer ${ghToken}`,
+                "Content-Type": "application/json",
+                "User-Agent": "vercel-to-github-relay",
+                Accept: "application/vnd.github+json",
+            },
+            body: JSON.stringify(dispatchBody),
         },
-        body: JSON.stringify(body),
-    });
+    );
 
     if (!ghResp.ok) {
         const err = await ghResp.text();
-        res.status(502).send(`GitHub dispatch failed: ${ghResp.status} ${err}`);
+        res.status(502).send(`GitHub workflow_dispatch failed: ${ghResp.status} ${err}`);
         return;
     }
 

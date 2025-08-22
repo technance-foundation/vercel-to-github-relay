@@ -113,8 +113,6 @@ function verifyVercelSig(body: string, signature: string | null, secret: string)
     }
 }
 
-function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>): evt is VercelDeploymentSucceededEvent {
-    if (evt.type !== "deployment.succeeded" && evt.type !== "deployment.ready") return false;
-    const d = evt.payload?.deployment;
-    return Boolean(d && typeof d.url === "string" && typeof d.name === "string");
+export function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>): evt is VercelDeploymentSucceededEvent {
+    return evt.type === "deployment.succeeded" || evt.type === "deployment.ready";
 }

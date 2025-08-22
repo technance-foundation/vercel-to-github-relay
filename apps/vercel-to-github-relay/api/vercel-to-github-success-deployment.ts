@@ -1,5 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
+const GH_WORKFLOW_FILE = "e2e-on-vercel-webhook.yaml";
+
 export default async function handler(req: any, res: any) {
     if (req.method !== "POST") {
         res.status(405).send("Method Not Allowed");
@@ -69,10 +71,8 @@ export default async function handler(req: any, res: any) {
         },
     };
 
-    const ghWorkflowFile = "dispatch-test.yaml";
-
     const ghResp = await fetch(
-        `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/${encodeURIComponent(ghWorkflowFile)}/dispatches`,
+        `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/${encodeURIComponent(GH_WORKFLOW_FILE)}/dispatches`,
         {
             method: "POST",
             headers: {

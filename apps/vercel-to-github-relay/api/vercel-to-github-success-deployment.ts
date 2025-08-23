@@ -1,5 +1,7 @@
 import crypto from "crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { App as GitHubApp } from "@octokit/app";
+import { Octokit } from "octokit";
 import type { VercelWebhook, VercelDeploymentPayload, VercelDeploymentSucceededEvent } from "../types";
 
 const GH_WORKFLOW_FILE = "e2e.yaml";
@@ -40,7 +42,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const dep = envelope.payload.deployment;
     const rawUrl = dep.url;
     const url = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
-
     const ref = dep.meta?.githubCommitRef ?? dep.meta?.gitlabCommitRef ?? dep.meta?.branch ?? dep.ref ?? "";
 
     if (!rawUrl || !ref) {
@@ -48,63 +49,63 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    const ghOwner = process.env.GH_OWNER!;
-    const ghRepo = process.env.GH_REPO!;
-    const ghToken = process.env.GH_TOKEN_RELAY!;
-    if (!ghOwner || !ghRepo || !ghToken) {
-        res.status(500).send("Missing GH_OWNER/GH_REPO/GH_TOKEN_RELAY");
+    const appId = process.env.GH_APP_ID!;
+    const privateKey = process.env.GH_APP_PRIVATE_KEY!;
+    const owner = process.env.GH_OWNER!;
+    const repo = process.env.GH_REPO!;
+
+    if (!appId || !privateKey || !owner || !repo) {
+        res.status(500).send("Missing GH_APP_ID / GH_APP_PRIVATE_KEY / GH_OWNER / GH_REPO");
         return;
     }
 
-    const metaSha = dep.meta?.githubCommitSha || dep.meta?.commitSha || dep.meta?.sha;
-    let headSha = typeof metaSha === "string" && metaSha.length > 0 ? metaSha : undefined;
+    const app = new GitHubApp({
+        appId: Number(appId),
+        privateKey,
+    });
 
-    if (!headSha) {
-        try {
-            headSha = await resolveHeadSha(ghOwner, ghRepo, ref, ghToken);
-        } catch (e: any) {
-            res.status(502).send(`Failed to resolve head SHA for ref '${ref}': ${e?.message || e}`);
-            return;
-        }
-    }
-
-    const checkName = `${CHECK_NAME_PREFIX}${dep.name}`;
-    let checkRunId: number;
     try {
-        checkRunId = await createCheckRun(ghOwner, ghRepo, headSha!, checkName, ghToken);
+        const appOctokit: Octokit = await app.octokit;
+        const inst = await appOctokit.request("GET /repos/{owner}/{repo}/installation", { owner, repo });
+        const installationId = Number(inst.data.id);
+
+        const octokit: Octokit = await app.getInstallationOctokit(installationId);
+
+        const metaSha = dep.meta?.githubCommitSha || dep.meta?.commitSha || dep.meta?.sha;
+        let headSha: string | undefined = typeof metaSha === "string" && metaSha.length ? metaSha : undefined;
+
+        if (!headSha) {
+            headSha = await resolveHeadSha(octokit, owner, repo, ref);
+        }
+
+        const checkName = `${CHECK_NAME_PREFIX} ${dep.name}`;
+        const { data: created } = await octokit.rest.checks.create({
+            owner,
+            repo,
+            name: checkName,
+            head_sha: headSha!,
+            status: "queued",
+            started_at: new Date().toISOString(),
+        });
+
+        const checkRunId = created.id;
+
+        await octokit.request("POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", {
+            owner,
+            repo,
+            workflow_id: GH_WORKFLOW_FILE,
+            ref,
+            inputs: {
+                url,
+                project: dep.name,
+                check_run_id: String(checkRunId),
+            },
+        });
+
+        res.status(200).send("OK");
     } catch (e: any) {
-        res.status(502).send(`Failed to create check run: ${e?.message || e}`);
-        return;
+        res.status(502).send(e?.message || String(e));
     }
-
-    const body = { ref, inputs: { url, project: dep.name, check_run_id: String(checkRunId) } };
-
-    const resp = await fetch(
-        `https://api.github.com/repos/${ghOwner}/${ghRepo}/actions/workflows/${GH_WORKFLOW_FILE}/dispatches`,
-        {
-            method: "POST",
-            headers: ghHeaders(ghToken),
-            body: JSON.stringify(body),
-        },
-    );
-
-    if (!resp.ok) {
-        const err = await resp.text();
-        await safeFailCheck(ghOwner, ghRepo, checkRunId, `workflow_dispatch failed: ${resp.status} ${err}`, ghToken);
-        res.status(502).send(`GitHub workflow_dispatch failed: ${resp.status} ${err}`);
-        return;
-    }
-
-    res.status(200).send("OK");
-}
-
-function ghHeaders(token: string) {
-    return {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "User-Agent": "vercel-to-github-relay",
-        Accept: "application/vnd.github+json",
-    };
 }
 
 function readRawBody(req: VercelRequest): Promise<string> {
@@ -121,57 +122,31 @@ function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>)
     return evt.type === "deployment.succeeded";
 }
 
-async function resolveHeadSha(owner: string, repo: string, ref: string, token: string): Promise<string> {
-    {
-        const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/commits/${encodeURIComponent(ref)}`, {
-            headers: ghHeaders(token),
-        });
-        if (r.ok) {
-            const j = await r.json();
-            if (j?.sha) return j.sha as string;
-        }
-    }
-    {
-        const r = await fetch(`https://api.github.com/repos/${owner}/${repo}/git/ref/heads/${encodeURIComponent(ref)}`, {
-            headers: ghHeaders(token),
-        });
-        if (r.ok) {
-            const j = await r.json();
-            const sha = j?.object?.sha as string | undefined;
-            if (sha) return sha;
-        }
-    }
-    throw new Error(`Could not resolve SHA for ref '${ref}'`);
-}
-
-async function createCheckRun(owner: string, repo: string, headSha: string, name: string, token: string): Promise<number> {
-    const body = { name, head_sha: headSha, status: "queued", started_at: new Date().toISOString() };
-    const resp = await fetch(`https://api.github.com/repos/${owner}/${repo}/check-runs`, {
-        method: "POST",
-        headers: ghHeaders(token),
-        body: JSON.stringify(body),
-    });
-    if (!resp.ok) {
-        const err = await resp.text();
-        throw new Error(`createCheckRun failed: ${resp.status} ${err}`);
-    }
-    const json = (await resp.json()) as { id: number };
-    return json.id;
-}
-
-async function safeFailCheck(owner: string, repo: string, checkRunId: number, summary: string, token: string): Promise<void> {
+async function resolveHeadSha(octokit: Octokit, owner: string, repo: string, ref: string): Promise<string> {
+    /*
+     * Try commits/{ref} first (works for branch or SHA)
+     */
     try {
-        await fetch(`https://api.github.com/repos/${owner}/${repo}/check-runs/${checkRunId}`, {
-            method: "PATCH",
-            headers: ghHeaders(token),
-            body: JSON.stringify({
-                status: "completed",
-                completed_at: new Date().toISOString(),
-                conclusion: "failure",
-                output: { title: "E2E Tests (relay error)", summary },
-            }),
-        });
+        const commit = await octokit.rest.repos.getCommit({ owner, repo, ref });
+        if (commit.data.sha) return commit.data.sha;
     } catch {
-        // best-effort
+        // fall through
     }
+
+    /*
+     * Fallback to git/getRef (heads/{ref})
+     */
+    try {
+        const getRef = await octokit.rest.git.getRef({
+            owner,
+            repo,
+            ref: `heads/${ref}`,
+        });
+        const sha = (getRef.data.object as any)?.sha as string | undefined;
+        if (sha) return sha;
+    } catch {
+        // fall through
+    }
+
+    throw new Error(`Could not resolve SHA for ref '${ref}'`);
 }

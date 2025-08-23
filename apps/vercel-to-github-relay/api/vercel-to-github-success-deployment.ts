@@ -70,6 +70,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             head_sha: headSha,
             status: "queued",
             started_at: new Date().toISOString(),
+            output: {
+                title: "E2E Tests",
+                summary: `Queued workflow for **${dep.name}**\n\n**Preview URL:** ${url}`,
+            },
         });
 
         const checkRunId = created.id;

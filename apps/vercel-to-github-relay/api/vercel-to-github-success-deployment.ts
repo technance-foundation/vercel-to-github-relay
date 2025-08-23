@@ -1,11 +1,14 @@
 import crypto from "crypto";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { App as GitHubApp } from "@octokit/app";
-import { Octokit } from "octokit";
-import type { VercelWebhook, VercelDeploymentPayload, VercelDeploymentSucceededEvent } from "../types";
+import { Octokit as RestOctokit } from "octokit";
+import type { VercelWebhook, VercelDeploymentPayload, VercelDeploymentSucceededEvent } from "../types.js";
 
 const GH_WORKFLOW_FILE = "e2e.yaml";
 const CHECK_NAME_PREFIX = "E2E Tests —";
+
+type InstallationClient<T extends GitHubApp> = Awaited<ReturnType<T["getInstallationOctokit"]>>;
+type AppClient<T extends GitHubApp> = Awaited<ReturnType<T["getInstallationOctokit"]>>;
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== "POST") {
@@ -49,10 +52,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return;
     }
 
-    const appId = process.env.GH_APP_ID!;
-    const privateKey = process.env.GH_APP_PRIVATE_KEY!;
-    const owner = process.env.GH_OWNER!;
-    const repo = process.env.GH_REPO!;
+    const appId = process.env.GH_APP_ID;
+    const privateKey = process.env.GH_APP_PRIVATE_KEY;
+    const owner = process.env.GH_OWNER;
+    const repo = process.env.GH_REPO;
 
     if (!appId || !privateKey || !owner || !repo) {
         res.status(500).send("Missing GH_APP_ID / GH_APP_PRIVATE_KEY / GH_OWNER / GH_REPO");
@@ -61,15 +64,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     const app = new GitHubApp({
         appId: Number(appId),
-        privateKey,
+        privateKey: normalizePrivateKey(privateKey),
+        Octokit: RestOctokit,
     });
 
     try {
-        const appOctokit: Octokit = await app.octokit;
-        const inst = await appOctokit.request("GET /repos/{owner}/{repo}/installation", { owner, repo });
+        type InstClient = InstallationClient<typeof app>;
+        type AppScoped = AppClient<typeof app>;
+
+        async function resolveHeadSha(
+            octokit: InstallationClient<typeof app>,
+            owner: string,
+            repo: string,
+            ref: string,
+        ): Promise<string> {
+            try {
+                const commit = await octokit.rest.repos.getCommit({ owner, repo, ref });
+                if (commit.data.sha) return commit.data.sha;
+            } catch {}
+
+            try {
+                const getRef = await octokit.rest.git.getRef({ owner, repo, ref: `heads/${ref}` });
+                const sha = (getRef.data.object as any)?.sha as string | undefined;
+                if (sha) return sha;
+            } catch {}
+
+            throw new Error(`Could not resolve SHA for ref '${ref}'`);
+        }
+
+        const appOctokit: AppScoped = app.octokit;
+        const inst = await appOctokit.request("GET /repos/{owner}/{repo}/installation", {
+            owner,
+            repo,
+        });
         const installationId = Number(inst.data.id);
 
-        const octokit: Octokit = await app.getInstallationOctokit(installationId);
+        const octokit: InstClient = await app.getInstallationOctokit(installationId);
 
         const metaSha = dep.meta?.githubCommitSha || dep.meta?.commitSha || dep.meta?.sha;
         let headSha: string | undefined = typeof metaSha === "string" && metaSha.length ? metaSha : undefined;
@@ -122,31 +152,7 @@ function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>)
     return evt.type === "deployment.succeeded";
 }
 
-async function resolveHeadSha(octokit: Octokit, owner: string, repo: string, ref: string): Promise<string> {
-    /*
-     * Try commits/{ref} first (works for branch or SHA)
-     */
-    try {
-        const commit = await octokit.rest.repos.getCommit({ owner, repo, ref });
-        if (commit.data.sha) return commit.data.sha;
-    } catch {
-        // fall through
-    }
-
-    /*
-     * Fallback to git/getRef (heads/{ref})
-     */
-    try {
-        const getRef = await octokit.rest.git.getRef({
-            owner,
-            repo,
-            ref: `heads/${ref}`,
-        });
-        const sha = (getRef.data.object as any)?.sha as string | undefined;
-        if (sha) return sha;
-    } catch {
-        // fall through
-    }
-
-    throw new Error(`Could not resolve SHA for ref '${ref}'`);
+function normalizePrivateKey(pk?: string): string {
+    if (!pk) return "";
+    return pk.includes("\\n") ? pk.replace(/\\n/g, "\n") : pk;
 }

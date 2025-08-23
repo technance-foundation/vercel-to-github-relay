@@ -2,7 +2,7 @@
     "name": "@technance/vercel-to-github-relay",
     "version": "1.0.0",
     "private": true,
-    "type": "commonjs",
+    "type": "module",
     "scripts": {
         "dev": "vercel dev",
         "start": "vercel dev"

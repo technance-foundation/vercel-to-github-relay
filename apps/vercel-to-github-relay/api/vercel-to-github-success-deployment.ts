@@ -1,7 +1,8 @@
-import crypto from "crypto";
-import type { VercelRequest, VercelResponse } from "@vercel/node";
+import crypto from "node:crypto";
 import { App as GitHubApp } from "@octokit/app";
-import type { VercelWebhook, VercelDeploymentPayload, VercelDeploymentSucceededEvent } from "../types.js";
+import type { VercelRequest, VercelResponse } from "@vercel/node";
+
+import type { VercelDeploymentPayload, VercelDeploymentSucceededEvent, VercelWebhook } from "../types.js";
 
 const GH_WORKFLOW_FILE = "e2e.yaml";
 const CHECK_NAME_PREFIX = "E2E Tests —";

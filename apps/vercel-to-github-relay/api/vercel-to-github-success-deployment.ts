@@ -92,8 +92,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         });
 
         res.status(200).send("OK");
-    } catch (e: any) {
-        res.status(502).send(e?.message || String(e));
+    } catch (e) {
+        if (e instanceof Error) {
+            res.status(502).send(e?.message || String(e));
+        }
+        throw e;
     }
 }
 
@@ -101,7 +104,9 @@ function readRawBody(req: VercelRequest): Promise<string> {
     return new Promise((resolve, reject) => {
         let data = "";
         req.setEncoding("utf8");
-        req.on("data", (chunk) => (data += chunk));
+        req.on("data", (chunk) => {
+            data += chunk;
+        });
         req.on("end", () => resolve(data));
         req.on("error", reject);
     });
@@ -111,6 +116,7 @@ function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>)
     return evt.type === "deployment.succeeded";
 }
 
+// biome-ignore lint/suspicious/noExplicitAny: hard to type
 async function resolveHeadSha(octokit: any, owner: string, repo: string, ref: string): Promise<string> {
     try {
         const commit = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}", { owner, repo, ref });
@@ -121,7 +127,7 @@ async function resolveHeadSha(octokit: any, owner: string, repo: string, ref: st
 
     try {
         const getRef = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", { owner, repo, ref: `heads/${ref}` });
-        const sha = (getRef.data.object as any)?.sha as string | undefined;
+        const sha = getRef.data.object?.sha as string | undefined;
         if (sha) return sha;
     } catch {
         // fall through

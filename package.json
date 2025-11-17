@@ -19,5 +19,8 @@
         "onlyBuiltDependencies": [
             "esbuild"
         ]
+    },
+    "devDependencies": {
+        "@types/node": "^24.10.1"
     }
 }

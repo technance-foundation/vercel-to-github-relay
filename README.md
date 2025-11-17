@@ -18,6 +18,13 @@ It’s a small piece of glue, but it’s what makes PR E2E checks feel “native
 
 ---
 
+### GitHub App Required
+
+The Relay uses a GitHub App to create check runs and trigger workflows.
+If you don't have one yet, follow the setup guide here:
+
+👉 **[GitHub App Setup Guide](./GITHUB_APP_SETUP.md)**
+
 ## **Environment variables**
 
 To run correctly, the Relay needs:

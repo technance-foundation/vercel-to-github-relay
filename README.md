@@ -135,3 +135,69 @@ Once deployed, configure your Vercel project to send `deployment.succeeded` webh
 ```
 /api/vercel-to-github-success-deployment
 ```
+
+## **Local Testing (Simulating Vercel Webhooks)**
+
+Vercel does not forward real webhooks to `localhost`, so the project includes a helper script to simulate a full `deployment.succeeded` event.
+
+This is useful when testing:
+
+-   Webhook signature verification
+-   Git SHA resolution
+-   GitHub App check run creation
+-   Workflow dispatching logic
+
+### **Usage**
+
+```sh
+./test-webhook.sh <project> <preview-url> [branch]
+```
+
+-   `<project>` – The Vercel project name (`deployment.name`)
+-   `<preview-url>` – The preview deployment URL (`deployment.url`)
+-   `[branch]` – Optional Git branch/ref (defaults to `main`)
+
+### **Examples**
+
+#### Basic test (branch defaults to `main`)
+
+```sh
+./test-webhook.sh dashboard https://dashboard-git-main-abc123.vercel.app
+```
+
+#### Custom branch
+
+```sh
+./test-webhook.sh dashboard https://dashboard-git-feat-login.vercel.app feat/login
+```
+
+#### Testing against a local server
+
+```sh
+export WEBHOOK_ENDPOINT="http://localhost:3000/api/vercel-to-github-success-deployment"
+export VERCEL_WEBHOOK_SECRET="dev-secret"
+
+./test-webhook.sh dashboard http://localhost:3000
+```
+
+### **Environment Variable Overrides**
+
+You can override the script defaults:
+
+| Variable                | Purpose                                     |
+| ----------------------- | ------------------------------------------- |
+| `VERCEL_WEBHOOK_SECRET` | The secret used to sign the webhook payload |
+| `WEBHOOK_ENDPOINT`      | API endpoint to send the test webhook to    |
+
+Example:
+
+```sh
+export VERCEL_WEBHOOK_SECRET="mysecret"
+export WEBHOOK_ENDPOINT="https://my-relay.vercel.app/api/vercel-to-github-success-deployment"
+
+./test-webhook.sh app https://app-preview.vercel.app dev-branch
+```
+
+---
+
+The script sends a **fully valid** Vercel webhook envelope, computes the correct **HMAC SHA1 signature**, and posts it to your Relay—just like Vercel does in production.

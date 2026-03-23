@@ -5,7 +5,11 @@
     "type": "module",
     "scripts": {
         "dev": "vercel dev",
-        "start": "vercel dev"
+        "start": "vercel dev",
+        "format": "biome format .",
+        "format:fix": "biome format . --write",
+        "lint": "biome lint .",
+        "lint:fix": "biome lint . --write"
     },
     "dependencies": {
         "@octokit/app": "^16.1.2",
@@ -21,6 +25,7 @@
         ]
     },
     "devDependencies": {
+        "@biomejs/biome": "^2.4.8",
         "@types/node": "^24.10.1"
     }
 }

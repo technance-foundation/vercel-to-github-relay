@@ -13,15 +13,21 @@ import type {
 const GH_WORKFLOW_FILE = "e2e.yaml";
 const CHECK_NAME_PREFIX = "E2E Tests —";
 const E2E_PROJECTS_CONFIG_PATH = ".github/e2e-projects.json";
+const DEFAULT_TEST_COMMAND = "pnpm run test:e2e";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-    if (req.method !== "POST") return void res.status(405).send("Method Not Allowed");
+    if (req.method !== "POST") {
+        return void res.status(405).send("Method Not Allowed");
+    }
 
     const secret = process.env.VERCEL_WEBHOOK_SECRET;
-    if (!secret) return void res.status(500).send("Missing VERCEL_WEBHOOK_SECRET");
+    if (!secret) {
+        return void res.status(500).send("Missing VERCEL_WEBHOOK_SECRET");
+    }
 
     const raw = await readRawBody(req);
     const signature = crypto.createHmac("sha1", secret).update(raw).digest("hex");
+
     if (signature !== req.headers["x-vercel-signature"]) {
         return void res.status(401).send("Invalid signature");
     }
@@ -37,17 +43,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         return void res.status(202).send("Ignored");
     }
 
-    const dep = envelope.payload.deployment;
-    const rawUrl = dep.url;
+    const payload = envelope.payload;
+    const deployment = payload.deployment;
+    const rawUrl = deployment.url;
     const url = rawUrl.startsWith("http") ? rawUrl : `https://${rawUrl}`;
-    const ref = dep.meta?.githubCommitRef ?? dep.meta?.gitlabCommitRef ?? dep.meta?.branch ?? dep.ref ?? "";
+    const ref =
+        deployment.meta?.githubCommitRef ?? deployment.meta?.gitlabCommitRef ?? deployment.meta?.branch ?? deployment.ref ?? "";
 
-    if (!rawUrl || !ref) return void res.status(400).send("Missing URL or branch ref");
+    if (!rawUrl || !ref) {
+        return void res.status(400).send("Missing URL or branch ref");
+    }
 
     const appId = process.env.GH_APP_ID;
     const privateKey = process.env.GH_APP_PRIVATE_KEY;
     const owner = process.env.GH_OWNER;
     const repo = process.env.GH_REPO;
+
     if (!appId || !privateKey || !owner || !repo) {
         return void res.status(500).send("Missing GH_APP_ID / GH_APP_PRIVATE_KEY / GH_OWNER / GH_REPO");
     }
@@ -59,19 +70,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     try {
         const appOctokit = app.octokit;
-        const inst = await appOctokit.request("GET /repos/{owner}/{repo}/installation", { owner, repo });
-        const installationId = Number(inst.data.id);
+        const installation = await appOctokit.request("GET /repos/{owner}/{repo}/installation", {
+            owner,
+            repo,
+        });
+        const installationId = Number(installation.data.id);
 
         const octokit = await app.getInstallationOctokit(installationId);
 
-        const metaSha = dep.meta?.githubCommitSha || dep.meta?.commitSha || dep.meta?.sha;
+        const metaSha = deployment.meta?.githubCommitSha || deployment.meta?.commitSha || deployment.meta?.sha;
         const headSha =
-            (typeof metaSha === "string" && metaSha.length ? metaSha : undefined) ??
+            (typeof metaSha === "string" && metaSha.length > 0 ? metaSha : undefined) ??
             (await resolveHeadSha(octokit, owner, repo, ref));
 
-        const resolvedProject = await resolveProjectConfig(octokit, owner, repo, dep.name);
+        const resolvedProject = await resolveProjectConfig(octokit, owner, repo, payload.project.id, deployment.name);
 
-        const checkName = `${CHECK_NAME_PREFIX} ${resolvedProject.checkName ?? dep.name}`;
+        const checkName = `${CHECK_NAME_PREFIX} ${resolvedProject.checkName ?? resolvedProject.project}`;
 
         const { data: created } = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
             owner,
@@ -88,6 +102,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     `**Preview URL:** ${url}`,
                     `**Working Directory:** ${resolvedProject.workingDirectory}`,
                     `**Test Command:** ${resolvedProject.testCommand}`,
+                    `**Vercel Project ID:** ${payload.project.id}`,
+                    `**Vercel Deployment Name:** ${deployment.name}`,
                 ].join("\n"),
             },
         });
@@ -108,11 +124,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             },
         });
 
-        res.status(200).send("OK");
+        return void res.status(200).send("OK");
     } catch (e) {
         if (e instanceof Error) {
-            res.status(502).send(e?.message || String(e));
+            return void res.status(502).send(e.message || String(e));
         }
+
         throw e;
     }
 }
@@ -120,6 +137,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 function readRawBody(req: VercelRequest): Promise<string> {
     return new Promise((resolve, reject) => {
         let data = "";
+
         req.setEncoding("utf8");
         req.on("data", (chunk) => {
             data += chunk;
@@ -136,16 +154,30 @@ function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>)
 // biome-ignore lint/suspicious/noExplicitAny: Hard to type
 async function resolveHeadSha(octokit: any, owner: string, repo: string, ref: string): Promise<string> {
     try {
-        const commit = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}", { owner, repo, ref });
-        if (commit.data?.sha) return commit.data.sha;
+        const commit = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}", {
+            owner,
+            repo,
+            ref,
+        });
+
+        if (commit.data?.sha) {
+            return commit.data.sha;
+        }
     } catch {
         // fall through
     }
 
     try {
-        const getRef = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", { owner, repo, ref: `heads/${ref}` });
-        const sha = getRef.data.object?.sha as string | undefined;
-        if (sha) return sha;
+        const gitRef = await octokit.request("GET /repos/{owner}/{repo}/git/ref/{ref}", {
+            owner,
+            repo,
+            ref: `heads/${ref}`,
+        });
+
+        const sha = gitRef.data.object?.sha as string | undefined;
+        if (sha) {
+            return sha;
+        }
     } catch {
         // fall through
     }
@@ -158,6 +190,7 @@ async function resolveProjectConfig(
     octokit: any,
     owner: string,
     repo: string,
+    projectId: string,
     deploymentName: string,
 ): Promise<E2EProjectConfig> {
     try {
@@ -173,10 +206,15 @@ async function resolveProjectConfig(
 
         const decoded = Buffer.from(response.data.content, "base64").toString("utf8");
         const parsed = JSON.parse(decoded) as E2EProjectsFile;
-        const matched = parsed.projects?.[deploymentName];
 
-        if (matched) {
-            return matched;
+        const byProjectId = parsed.projects?.[projectId];
+        if (byProjectId) {
+            return byProjectId;
+        }
+
+        const byDeploymentName = parsed.projects?.[deploymentName];
+        if (byDeploymentName) {
+            return byDeploymentName;
         }
     } catch {
         // fall back to convention
@@ -185,12 +223,15 @@ async function resolveProjectConfig(
     return {
         project: deploymentName,
         workingDirectory: `apps/${deploymentName}`,
-        testCommand: "pnpm run test:e2e",
+        testCommand: DEFAULT_TEST_COMMAND,
         checkName: deploymentName,
     };
 }
 
 function normalizePrivateKey(pk?: string): string {
-    if (!pk) return "";
+    if (!pk) {
+        return "";
+    }
+
     return pk.includes("\\n") ? pk.replace(/\\n/g, "\n") : pk;
 }

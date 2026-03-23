@@ -3,7 +3,8 @@
  */
 export interface VercelWebhook<P = unknown> {
     /**
-     * Event type, e.g. "deployment.succeeded", "deployment.error", etc.
+     * Event type, for example:
+     * "deployment.succeeded", "deployment.ready", "deployment.error".
      */
     type: string;
 
@@ -13,156 +14,183 @@ export interface VercelWebhook<P = unknown> {
     id: string;
 
     /**
-     * Webhook delivery timestamp (UNIX ms).
+     * Webhook delivery timestamp in Unix milliseconds.
      */
     createdAt: number;
 
     /**
-     * Region string where the event occurred (possibly null).
+     * Region where the event occurred, if provided.
      */
     region?: string | null;
 
     /**
-     * Event-specific payload (typed separately, e.g. VercelDeploymentPayload).
+     * Event-specific payload.
      */
     payload: P;
 }
 
 /**
- * Deployment payload for deployment-related webhook events.
+ * Deployment payload for deployment-related Vercel webhook events.
+ *
+ * Based on Vercel webhook payloads such as `deployment.succeeded`.
  */
 export interface VercelDeploymentPayload {
     /**
-     * Team information (if applicable).
+     * Team information for the event, if applicable.
      */
-    team?: { id: string | null };
+    team?: {
+        /**
+         * Vercel team ID, or null when not applicable.
+         */
+        id: string | null;
+    };
 
     /**
-     * User information who triggered the event.
+     * User information for the event, if applicable.
      */
-    user?: { id: string };
+    user?: {
+        /**
+         * Vercel user ID.
+         */
+        id: string;
+    };
 
     /**
-     * Deployment object with metadata and status.
+     * Deployment metadata.
      */
     deployment: {
         /**
-         * Deployment ID.
+         * Vercel deployment ID.
          */
         id: string;
 
         /**
-         * Arbitrary key/value metadata provided at deploy time.
+         * Arbitrary deployment metadata provided by Vercel.
+         * Often includes git-related fields such as branch or commit SHA.
          */
         meta?: Record<string, string>;
 
         /**
-         * Preview or production URL of the deployment (hostname or full URL).
+         * Preview or production deployment URL.
+         * This may be a hostname or a full URL depending on the payload source.
          */
         url: string;
 
         /**
-         * Project name used in the deployment URL.
+         * Vercel project name associated with the deployment.
+         * This is human-readable, but can change if the project is renamed.
          */
         name: string;
 
         /**
-         * Optional state, often "READY" or "ERROR".
+         * Optional deployment state, often "READY" or "ERROR".
          */
         state?: "READY" | "ERROR" | string;
 
         /**
-         * Optional status field (string).
+         * Optional deployment status string.
          */
         status?: string;
 
         /**
-         * Git ref/branch associated with the deployment.
+         * Git ref or branch associated with the deployment, if available.
          */
         ref?: string;
     };
 
     /**
-     * Useful dashboard links for the deployment and project.
+     * Helpful dashboard links provided by Vercel.
      */
     links?: {
         /**
-         * Dashboard URL to inspect the deployment.
+         * Vercel dashboard URL for inspecting the deployment.
          */
         deployment?: string;
 
         /**
-         * Dashboard URL to the project.
+         * Vercel dashboard URL for inspecting the project.
          */
         project?: string;
     };
 
     /**
      * Deployment target environment.
-     * One of "production", "staging", or null.
      */
     target: "production" | "staging" | null;
 
     /**
-     * Project metadata.
+     * Vercel project metadata.
      */
-    project: { id: string };
+    project: {
+        /**
+         * Stable Vercel project ID.
+         * Prefer this over deployment name when mapping projects in config.
+         */
+        id: string;
+    };
 
     /**
-     * Plan type of the deployment.
+     * Vercel plan type for the deployment, if present.
      */
     plan?: string;
 
     /**
-     * List of supported regions for the deployment.
+     * Supported deployment regions, if present.
      */
     regions?: string[];
 }
 
 /**
- * Specialized webhook event type for succeeded/ready deployments.
+ * Specialized webhook event for successful deployment completion.
  */
 export type VercelDeploymentSucceededEvent = VercelWebhook<VercelDeploymentPayload> & {
     type: "deployment.succeeded";
 };
 
 /**
- * Configuration for a single E2E project resolved from a Vercel deployment name.
+ * Configuration for a single E2E project.
  */
 export interface E2EProjectConfig {
     /**
      * Logical project/app name passed into the E2E workflow.
-     * This is typically used for reporting and workflow inputs.
+     * This is usually the app identifier used in CI reporting.
      */
     project: string;
 
     /**
-     * Repository-relative working directory where the E2E tests should run.
-     * Example: "apps/portal"
+     * Repository-relative working directory where E2E tests should run.
+     * Example: "apps/midnight"
      */
     workingDirectory: string;
 
     /**
-     * Command used to execute the E2E tests for this project.
+     * Command used to execute E2E tests for this project.
      * Example: "pnpm run test:e2e"
      */
     testCommand: string;
 
     /**
      * Optional human-friendly label used in the GitHub check run name.
-     * If omitted, the deployment name or project name can be used instead.
+     * If omitted, the workflow may fall back to the configured project name.
      */
     checkName?: string;
 }
 
 /**
- * Root structure of the repository E2E project configuration file.
+ * Root structure of the E2E project configuration file.
  *
- * The object keys under `projects` are expected to match Vercel deployment names.
+ * Keys under `projects` should preferably be Vercel project IDs for stability.
+ * Name-based keys can still be supported as a fallback when needed.
  */
 export interface E2EProjectsFile {
     /**
-     * Map of Vercel deployment names to E2E project configuration.
+     * Map of project resolvers to E2E project configuration.
+     *
+     * Recommended key:
+     * - Vercel project ID, for example: "prj_123456789"
+     *
+     * Optional fallback key:
+     * - Vercel deployment/project name, for example: "midnight"
      */
     projects: Record<string, E2EProjectConfig>;
 }

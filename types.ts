@@ -125,3 +125,44 @@ export interface VercelDeploymentPayload {
 export type VercelDeploymentSucceededEvent = VercelWebhook<VercelDeploymentPayload> & {
     type: "deployment.succeeded";
 };
+
+/**
+ * Configuration for a single E2E project resolved from a Vercel deployment name.
+ */
+export interface E2EProjectConfig {
+    /**
+     * Logical project/app name passed into the E2E workflow.
+     * This is typically used for reporting and workflow inputs.
+     */
+    project: string;
+
+    /**
+     * Repository-relative working directory where the E2E tests should run.
+     * Example: "apps/portal"
+     */
+    workingDirectory: string;
+
+    /**
+     * Command used to execute the E2E tests for this project.
+     * Example: "pnpm run test:e2e"
+     */
+    testCommand: string;
+
+    /**
+     * Optional human-friendly label used in the GitHub check run name.
+     * If omitted, the deployment name or project name can be used instead.
+     */
+    checkName?: string;
+}
+
+/**
+ * Root structure of the repository E2E project configuration file.
+ *
+ * The object keys under `projects` are expected to match Vercel deployment names.
+ */
+export interface E2EProjectsFile {
+    /**
+     * Map of Vercel deployment names to E2E project configuration.
+     */
+    projects: Record<string, E2EProjectConfig>;
+}

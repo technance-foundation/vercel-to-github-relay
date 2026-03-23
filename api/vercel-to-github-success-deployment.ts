@@ -2,10 +2,17 @@ import crypto from "node:crypto";
 import { App as GitHubApp } from "@octokit/app";
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 
-import type { VercelDeploymentPayload, VercelDeploymentSucceededEvent, VercelWebhook } from "../types.js";
+import type {
+    E2EProjectConfig,
+    E2EProjectsFile,
+    VercelDeploymentPayload,
+    VercelDeploymentSucceededEvent,
+    VercelWebhook,
+} from "../types.js";
 
 const GH_WORKFLOW_FILE = "e2e.yaml";
 const CHECK_NAME_PREFIX = "E2E Tests —";
+const E2E_PROJECTS_CONFIG_PATH = ".github/e2e-projects.json";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== "POST") return void res.status(405).send("Method Not Allowed");
@@ -62,7 +69,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             (typeof metaSha === "string" && metaSha.length ? metaSha : undefined) ??
             (await resolveHeadSha(octokit, owner, repo, ref));
 
-        const checkName = `${CHECK_NAME_PREFIX} ${dep.name}`;
+        const resolvedProject = await resolveProjectConfig(octokit, owner, repo, dep.name);
+
+        const checkName = `${CHECK_NAME_PREFIX} ${resolvedProject.checkName ?? dep.name}`;
 
         const { data: created } = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
             owner,
@@ -73,7 +82,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             started_at: new Date().toISOString(),
             output: {
                 title: "E2E Tests",
-                summary: `Queued workflow for **${dep.name}**\n\n**Preview URL:** ${url}`,
+                summary: [
+                    `Queued workflow for **${resolvedProject.project}**`,
+                    "",
+                    `**Preview URL:** ${url}`,
+                    `**Working Directory:** ${resolvedProject.workingDirectory}`,
+                    `**Test Command:** ${resolvedProject.testCommand}`,
+                ].join("\n"),
             },
         });
 
@@ -86,8 +101,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             ref,
             inputs: {
                 url,
-                project: dep.name,
+                project: resolvedProject.project,
                 check_run_id: String(checkRunId),
+                working_directory: resolvedProject.workingDirectory,
+                test_command: resolvedProject.testCommand,
             },
         });
 
@@ -116,7 +133,7 @@ function isDeploymentSucceededEvent(evt: VercelWebhook<VercelDeploymentPayload>)
     return evt.type === "deployment.succeeded";
 }
 
-// biome-ignore lint/suspicious/noExplicitAny: hard to type
+// biome-ignore lint/suspicious/noExplicitAny: Hard to type
 async function resolveHeadSha(octokit: any, owner: string, repo: string, ref: string): Promise<string> {
     try {
         const commit = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}", { owner, repo, ref });
@@ -134,6 +151,43 @@ async function resolveHeadSha(octokit: any, owner: string, repo: string, ref: st
     }
 
     throw new Error(`Could not resolve SHA for ref '${ref}'`);
+}
+
+async function resolveProjectConfig(
+    // biome-ignore lint/suspicious/noExplicitAny: Hard to type
+    octokit: any,
+    owner: string,
+    repo: string,
+    deploymentName: string,
+): Promise<E2EProjectConfig> {
+    try {
+        const response = await octokit.request("GET /repos/{owner}/{repo}/contents/{path}", {
+            owner,
+            repo,
+            path: E2E_PROJECTS_CONFIG_PATH,
+        });
+
+        if (!("content" in response.data) || typeof response.data.content !== "string") {
+            throw new Error(`Config file '${E2E_PROJECTS_CONFIG_PATH}' is not a file`);
+        }
+
+        const decoded = Buffer.from(response.data.content, "base64").toString("utf8");
+        const parsed = JSON.parse(decoded) as E2EProjectsFile;
+        const matched = parsed.projects?.[deploymentName];
+
+        if (matched) {
+            return matched;
+        }
+    } catch {
+        // fall back to convention
+    }
+
+    return {
+        project: deploymentName,
+        workingDirectory: `apps/${deploymentName}`,
+        testCommand: "pnpm run test:e2e",
+        checkName: deploymentName,
+    };
 }
 
 function normalizePrivateKey(pk?: string): string {

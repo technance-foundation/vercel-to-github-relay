@@ -1,0 +1,53 @@
+{
+    "linter": {
+        "enabled": true,
+        "domains": {
+            "next": "all",
+            "project": "recommended",
+            "react": "all"
+        },
+        "rules": {
+            "correctness": {
+                "useUniqueElementIds": "off",
+                "useImportExtensions": "off",
+                "noUndeclaredDependencies": "off"
+            },
+            "style": {
+                "useExportType": "error",
+                "noNonNullAssertion": "off",
+                "useComponentExportOnlyModules": "off"
+            },
+            "a11y": {
+                "noSvgWithoutTitle": "off"
+            }
+        }
+    },
+
+    "assist": {
+        "enabled": true
+    },
+
+    "formatter": {
+        "enabled": true,
+        "indentStyle": "space",
+        "indentWidth": 4,
+        "lineWidth": 130,
+        "lineEnding": "lf",
+        "useEditorconfig": false
+    },
+
+    "javascript": {
+        "formatter": {
+            "quoteStyle": "double",
+            "jsxQuoteStyle": "double",
+            "lineWidth": 130,
+            "indentWidth": 4
+        }
+    },
+
+    "vcs": {
+        "enabled": true,
+        "clientKind": "git",
+        "useIgnoreFile": true
+    }
+}

@@ -9,9 +9,10 @@ Whenever Vercel finishes building a preview deployment, the Relay:
 
 1. Verifies the webhook signature
 2. Figures out the commit / branch involved
-3. Creates an E2E Check Run on GitHub
-4. Triggers the E2E workflow with the correct inputs
-5. Lets the E2E Test Runner handle everything else
+3. Resolves E2E project configuration
+4. Creates an E2E Check Run on GitHub
+5. Triggers the E2E workflow with the correct inputs
+6. Lets the E2E Test Runner handle everything else
 
 It’s a small piece of glue, but it's what makes E2E checks feel like a natural part of your pull-request flow.
 
@@ -52,14 +53,72 @@ To run correctly, the Relay needs:
 > [!IMPORTANT]
 > The Relay triggers a workflow by filename:
 > **`e2e.yaml`**
->
-> If you rename this file, update the Relay constant:
->
-> ```ts
-> const GH_WORKFLOW_FILE = "e2e.yaml";
-> ```
->
-> A mismatched name will cause E2E checks to remain stuck in “Queued” forever.
+
+If you rename this file, update the Relay constant:
+
+```ts
+const GH_WORKFLOW_FILE = "e2e.yaml";
+```
+
+A mismatched name will cause E2E checks to remain stuck in “Queued” forever.
+
+---
+
+## **E2E Project Configuration**
+
+The Relay supports per-project configuration via:
+
+```txt
+.github/e2e-projects.json
+```
+
+This allows mapping Vercel deployment names to actual repo structure and test commands.
+
+### Example
+
+```json
+{
+    "projects": {
+        "portal": {
+            "project": "portal",
+            "workingDirectory": "apps/portal",
+            "testCommand": "pnpm run test:e2e",
+            "checkName": "Portal"
+        }
+    }
+}
+```
+
+### Fields
+
+| Field              | Description                     |
+| ------------------ | ------------------------------- |
+| `project`          | Value passed to the workflow    |
+| `workingDirectory` | Where tests should run          |
+| `testCommand`      | Command used to run E2E tests   |
+| `checkName`        | Optional label for GitHub check |
+
+### How it works
+
+- The key (`portal`) must match the Vercel deployment name (`deployment.name`)
+- The Relay fetches this file from the repo at runtime
+- If a match is found → config is used
+- If not → fallback convention is used
+
+### Fallback behavior
+
+If no config exists, the Relay defaults to:
+
+```ts
+{
+  project: deploymentName,
+  workingDirectory: `apps/${deploymentName}`,
+  testCommand: "pnpm run test:e2e",
+  checkName: deploymentName,
+}
+```
+
+This ensures zero breaking changes.
 
 ---
 
@@ -73,21 +132,23 @@ Every time a preview deployment succeeds on Vercel:
 2. **It resolves the correct Git SHA**
    Either from deployment metadata or by asking GitHub.
 
-3. **It creates a GitHub Check Run**
+3. **It resolves project configuration**
+   From `.github/e2e-projects.json` (or fallback).
+
+4. **It creates a GitHub Check Run**
    So the PR instantly shows:
    _“E2E Tests — <project>”_
 
-4. **It dispatches the E2E workflow**
+5. **It dispatches the E2E workflow**
    Passing along:
-
     - `url`
     - `project`
     - `check_run_id`
+    - `working_directory`
+    - `test_command`
 
-5. **The workflow takes over**
+6. **The workflow takes over**
    The `e2e-test-runner` action handles setup, testing, and updating the check status.
-
-After that, the Relay’s job is done.
 
 ---
 
@@ -126,7 +187,7 @@ The Relay automatically restores `\n` if your environment strips them.
 
 This project is already wired for Vercel:
 
-```
+```sh
 vercel deploy --prod
 ```
 
@@ -136,16 +197,19 @@ Once deployed, configure your Vercel project to send `deployment.succeeded` webh
 /api/vercel-to-github-success-deployment
 ```
 
+---
+
 ## **Local Testing (Simulating Vercel Webhooks)**
 
 Vercel does not forward real webhooks to `localhost`, so the project includes a helper script to simulate a full `deployment.succeeded` event.
 
 This is useful when testing:
 
--   Webhook signature verification
--   Git SHA resolution
--   GitHub App check run creation
--   Workflow dispatching logic
+- Webhook signature verification
+- Git SHA resolution
+- Project config resolution
+- GitHub App check run creation
+- Workflow dispatching logic
 
 ### **Usage**
 
@@ -153,49 +217,31 @@ This is useful when testing:
 ./test-webhook.sh <project> <preview-url> [branch]
 ```
 
--   `<project>` – The Vercel project name (`deployment.name`)
--   `<preview-url>` – The preview deployment URL (`deployment.url`)
--   `[branch]` – Optional Git branch/ref (defaults to `main`)
+- `<project>` – Vercel project name (`deployment.name`)
+- `<preview-url>` – preview deployment URL
+- `[branch]` – optional (defaults to `main`)
 
 ### **Examples**
 
-#### Basic test (branch defaults to `main`)
+#### Basic
 
 ```sh
-./test-webhook.sh dashboard https://dashboard-git-main-abc123.vercel.app
+./test-webhook.sh portal https://portal-git-main-abc123.vercel.app
 ```
 
 #### Custom branch
 
 ```sh
-./test-webhook.sh dashboard https://dashboard-git-feat-login.vercel.app feat/login
+./test-webhook.sh portal https://portal-git-feat-login.vercel.app feat/login
 ```
 
-#### Testing against a local server
+#### Local Relay
 
 ```sh
 export WEBHOOK_ENDPOINT="http://localhost:3000/api/vercel-to-github-success-deployment"
 export VERCEL_WEBHOOK_SECRET="dev-secret"
 
-./test-webhook.sh dashboard http://localhost:3000
-```
-
-### **Environment Variable Overrides**
-
-You can override the script defaults:
-
-| Variable                | Purpose                                     |
-| ----------------------- | ------------------------------------------- |
-| `VERCEL_WEBHOOK_SECRET` | The secret used to sign the webhook payload |
-| `WEBHOOK_ENDPOINT`      | API endpoint to send the test webhook to    |
-
-Example:
-
-```sh
-export VERCEL_WEBHOOK_SECRET="mysecret"
-export WEBHOOK_ENDPOINT="https://my-relay.vercel.app/api/vercel-to-github-success-deployment"
-
-./test-webhook.sh app https://app-preview.vercel.app dev-branch
+./test-webhook.sh portal http://localhost:3000
 ```
 
 ---

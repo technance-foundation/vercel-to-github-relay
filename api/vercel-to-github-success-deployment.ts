@@ -10,7 +10,13 @@ import type {
     VercelWebhook,
 } from "../types.js";
 
-const GH_WORKFLOW_FILE = "e2e.yaml";
+/**
+ * Workflow filename the Relay dispatches when a project's
+ * `e2e-projects.json` entry does not specify its own `workflowFile`.
+ * Kept as a constant rather than read from env so existing consumers
+ * see no behavior change.
+ */
+const DEFAULT_WORKFLOW_FILE = "e2e.yaml";
 const CHECK_NAME_PREFIX = "E2E Tests —";
 const E2E_PROJECTS_CONFIG_PATH = ".github/e2e-projects.json";
 const DEFAULT_TEST_COMMAND = "pnpm run test:e2e";
@@ -86,6 +92,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         const resolvedProject = await resolveProjectConfig(octokit, owner, repo, payload.project.id, deployment.name);
 
         const checkName = `${CHECK_NAME_PREFIX} ${resolvedProject.checkName ?? resolvedProject.project}`;
+        const workflowFile = resolvedProject.workflowFile ?? DEFAULT_WORKFLOW_FILE;
 
         const { data: created } = await octokit.request("POST /repos/{owner}/{repo}/check-runs", {
             owner,
@@ -100,6 +107,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
                     `Queued workflow for **${resolvedProject.project}**`,
                     "",
                     `**Preview URL:** ${url}`,
+                    `**Workflow File:** ${workflowFile}`,
                     `**Working Directory:** ${resolvedProject.workingDirectory}`,
                     `**Test Command:** ${resolvedProject.testCommand}`,
                     `**Vercel Project ID:** ${payload.project.id}`,
@@ -110,18 +118,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
         const checkRunId = created.id;
 
+        /**
+         * Merge order: project's `additionalInputs` first, core inputs last.
+         * Core inputs always win so a misconfigured `additionalInputs` key
+         * (e.g. `"url"`) can never silently overwrite the Relay-resolved
+         * values the downstream e2e-test-runner action depends on.
+         */
+        const dispatchInputs: Record<string, string> = {
+            ...(resolvedProject.additionalInputs ?? {}),
+            url,
+            project: resolvedProject.project,
+            check_run_id: String(checkRunId),
+            working_directory: resolvedProject.workingDirectory,
+            test_command: resolvedProject.testCommand,
+        };
+
         await octokit.request("POST /repos/{owner}/{repo}/actions/workflows/{workflow_id}/dispatches", {
             owner,
             repo,
-            workflow_id: GH_WORKFLOW_FILE,
+            workflow_id: workflowFile,
             ref,
-            inputs: {
-                url,
-                project: resolvedProject.project,
-                check_run_id: String(checkRunId),
-                working_directory: resolvedProject.workingDirectory,
-                test_command: resolvedProject.testCommand,
-            },
+            inputs: dispatchInputs,
         });
 
         return void res.status(200).send("OK");

@@ -174,6 +174,37 @@ export interface E2EProjectConfig {
      * If omitted, the workflow may fall back to the configured project name.
      */
     checkName?: string;
+
+    /**
+     * Optional override for the GitHub Actions workflow file the Relay
+     * dispatches for this project. Defaults to the Relay's global default
+     * (`e2e.yaml`) when omitted.
+     *
+     * Useful when a project needs to route to a different workflow without
+     * forking the Relay -- for example, a live/integration suite that runs
+     * on a separate cadence, a smoke suite scoped to a single browser, or a
+     * visual-regression workflow that lives alongside the E2E one. The
+     * target workflow must declare a `workflow_dispatch` trigger with the
+     * standard inputs (`url`, `project`, `check_run_id`, `working_directory`,
+     * `test_command`) plus any keys named in `additionalInputs`.
+     *
+     * Example: `"e2e-live.yaml"`
+     */
+    workflowFile?: string;
+
+    /**
+     * Optional extra `workflow_dispatch` inputs forwarded to the target
+     * workflow alongside the five core inputs (`url`, `project`,
+     * `check_run_id`, `working_directory`, `test_command`).
+     *
+     * Every key must be declared in the workflow's
+     * `on.workflow_dispatch.inputs` block, and values must be strings
+     * (GitHub Actions accepts only string-typed workflow inputs at
+     * dispatch time). Use this to feed project- or workflow-specific
+     * knobs -- target browser, chain id, retry budget -- without
+     * adding hardcoded fields to the Relay's core payload.
+     */
+    additionalInputs?: Record<string, string>;
 }
 
 /**

@@ -48,19 +48,18 @@ To run correctly, the Relay needs:
 
 ---
 
-## **🚨 Workflow Filename Matters**
+## **Workflow Filename**
 
-> [!IMPORTANT]
-> The Relay triggers a workflow by filename:
-> **`e2e.yaml`**
+By default the Relay dispatches the workflow file named **`e2e.yaml`** on each repository's chosen ref. This is configurable per project — see [`workflowFile`](#fields) under the project config section below — so a single Relay can drive multiple workflows (live E2E, smoke, visual-regression, etc.) without forking.
 
-If you rename this file, update the Relay constant:
+The global default is set by a single constant in the Relay source:
 
 ```ts
-const GH_WORKFLOW_FILE = "e2e.yaml";
+const DEFAULT_WORKFLOW_FILE = "e2e.yaml";
 ```
 
-A mismatched name will cause E2E checks to remain stuck in "Queued" forever.
+> [!IMPORTANT]
+> If a project's `workflowFile` does not exist on the dispatched ref, or if the target workflow lacks a `workflow_dispatch` trigger with the expected inputs, the check run will remain stuck in "Queued" forever. Verify the filename and inputs match before relying on the dispatch.
 
 ---
 
@@ -107,12 +106,55 @@ You should use this as the primary key in your config, since:
 
 ### Fields
 
-| Field              | Description                     |
-| ------------------ | ------------------------------- |
-| `project`          | Value passed to the workflow    |
-| `workingDirectory` | Where tests should run          |
-| `testCommand`      | Command used to run E2E tests   |
-| `checkName`        | Optional label for GitHub check |
+| Field               | Description                                                                                                                                      |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `project`           | Value passed to the workflow                                                                                                                     |
+| `workingDirectory`  | Where tests should run                                                                                                                           |
+| `testCommand`       | Command used to run E2E tests                                                                                                                    |
+| `checkName`         | Optional label for GitHub check                                                                                                                  |
+| `workflowFile`      | _Optional._ Workflow filename to dispatch for this project. Defaults to `e2e.yaml`. Useful when a project needs a workflow other than the default. |
+| `additionalInputs`  | _Optional._ Extra `workflow_dispatch` inputs forwarded alongside the core five. Every key must be declared in the target workflow's `inputs:` block. |
+
+### Routing a project to a different workflow
+
+A project can opt into a non-default workflow without forking the Relay:
+
+```json
+{
+    "projects": {
+        "prj_live_e2e": {
+            "project": "midnight",
+            "workingDirectory": "apps/midnight",
+            "testCommand": "pnpm run test:e2e:live",
+            "checkName": "Midnight (Live)",
+            "workflowFile": "e2e-live.yaml"
+        }
+    }
+}
+```
+
+### Forwarding extra inputs
+
+Workflows that need project- or environment-specific knobs can declare them in their `workflow_dispatch.inputs` block and ask the Relay to forward them:
+
+```json
+{
+    "projects": {
+        "prj_chain_live": {
+            "project": "kit-demo",
+            "workingDirectory": "apps/demo",
+            "testCommand": "pnpm run test:e2e:live",
+            "workflowFile": "e2e-live.yaml",
+            "additionalInputs": {
+                "chain": "bsc",
+                "min_balance_usd": "5"
+            }
+        }
+    }
+}
+```
+
+The five core inputs (`url`, `project`, `check_run_id`, `working_directory`, `test_command`) are always sent and always win merge conflicts — if `additionalInputs` accidentally declares one of those keys, the Relay's resolved value is used so the downstream `e2e-test-runner` action keeps working.
 
 ---
 
@@ -142,6 +184,8 @@ If no config exists, the Relay defaults to:
   workingDirectory: `apps/${deploymentName}`,
   testCommand: "pnpm run test:e2e",
   checkName: deploymentName,
+  // workflowFile / additionalInputs are unset → DEFAULT_WORKFLOW_FILE
+  // is dispatched with only the five core inputs.
 }
 ```
 
@@ -166,13 +210,14 @@ Every time a preview deployment succeeds on Vercel:
    So the PR instantly shows:
    _"E2E Tests -- <project>"_
 
-5. **It dispatches the E2E workflow**
-   Passing along:
+5. **It dispatches the configured workflow** (`workflowFile` if set, otherwise `e2e.yaml`)
+   Passing along the five core inputs:
     - `url`
     - `project`
     - `check_run_id`
     - `working_directory`
     - `test_command`
+   ...plus any project-declared `additionalInputs`.
 
 6. **The workflow takes over**
    The `e2e-test-runner` action handles setup, testing, and updating the check status.
